@@ -153,7 +153,7 @@ class SqliteAdapter(ReferenceAdapter):
             branch=branch, data=data, collected_at=datetime.utcnow())
         record.save()
 
-    def get_commits(self, branch, kind: str, subkind: str, limit) -> frozenset:
+    def get_commits(self, branch: str=None, kind: str=None, subkind: str=None, limit: int=-1) -> frozenset:
         ReferenceData.select(
             ReferenceData.commit_id
         ).where(
