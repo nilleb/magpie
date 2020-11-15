@@ -1,4 +1,4 @@
-import argparse
+import click
 import yaml
 import peewee
 from datetime import datetime
@@ -12,8 +12,8 @@ from typing import Callable, Optional, List, Iterable
 __version__ = "dev~"
 
 HOME = Path.home()
-CONFIG_FILE_NAME = ".refrepo.yml"
-DB_FILE_NAME = ".refrepo.db"
+CONFIG_FILE_NAME = ".magpie.yml"
+DB_FILE_NAME = "magpie.db"
 KNOWN_ADAPTERS = {
     "default": "SqliteAdapter",
 }
@@ -128,6 +128,7 @@ class ReferenceAdapter(object):
         self,
         commit_id: str,
         data: bytes,
+        filepath: str,
         branch: str = None,
         kind: str = None,
         subkind: str = None,
@@ -151,7 +152,9 @@ class ReferenceData(peewee.Model):
     class Meta:
         database = db
         table_name = "timestamped_reference_data"
-        primary_key = peewee.CompositeKey("repository_id", "commid_it", "kind")
+        primary_key = peewee.CompositeKey(
+            "repository_id", "commit_id", "kind", "subkind"
+        )
 
 
 class SqliteAdapter(ReferenceAdapter):
@@ -168,26 +171,30 @@ class SqliteAdapter(ReferenceAdapter):
         commit_id: str,
         data: bytes,
         filepath: str,
-        kind: str,
         branch: str = None,
+        kind: str = None,
         subkind: str = None,
     ):
-        record = ReferenceData(
-            repository_id=self.repository_id,
-            commit_id=commit_id,
-            kind=kind,
-            subkind=subkind,
-            filepath=filepath,
-            branch=branch,
-            data=data,
-            collected_at=datetime.utcnow(),
-        )
-        record.save()
+        try:
+            ReferenceData.create(
+                repository_id=self.repository_id,
+                commit_id=commit_id,
+                kind=kind,
+                subkind=subkind,
+                filepath=filepath,
+                branch=branch,
+                data=data,
+                collected_at=datetime.utcnow(),
+            )
+        except peewee.IntegrityError:
+            logging.warning(
+                "Another record seems to exist for this repository/commit/kind/subkind"
+            )
 
     def get_commits(
         self, branch: str = None, kind: str = None, subkind: str = None, limit: int = -1
     ) -> frozenset:
-        return (
+        return frozenset(
             ReferenceData.select(ReferenceData.commit_id)
             .where(
                 ReferenceData.branch == branch,
@@ -255,87 +262,6 @@ def configuration(repository_path="."):
     return config
 
 
-def parse_common_args(parser=None):
-    if not parser:
-        parser = argparse.ArgumentParser(
-            description=(
-                "You can only improve! Compare Code Coverage and prevent regressions."
-            )
-        )
-
-    parser.add_argument(
-        "--adapter",
-        help="Choose the adapter to use (choices: sqlite, default)",
-        dest="adapter",
-        default="default",
-    )
-    parser.add_argument(
-        "--debug",
-        dest="debug",
-        help="whether to print debug messages",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--repository", dest="repository", help="the repository to analyze", default="."
-    )
-    parser.add_argument(
-        "-d",
-        "--repository-desambiguate",
-        dest="repository_id_modifier",
-        help="A token to distinguish repositories with the same first commit ID.",
-    )
-    parser.add_argument(
-        "-k",
-        "--kind",
-        dest="kind",
-        default="unspecified",
-        help="Define the kind of metric being collected. `cc` for Code Coverage, for example.",
-    )
-    parser.add_argument(
-        "-s",
-        "--subkind",
-        dest="subkind",
-        help="A supplementary characteristic of the metric being collected."
-        "Whether the code coverage has been colllected during the execution of "
-        "unit tests or integration tests, for example.",
-    )
-
-
-def parse_args(args=None, parser=None):
-    if not parser:
-        parser = argparse.ArgumentParser(
-            description=(
-                "Store and retrieve reference data associated to your repository commits."
-            )
-        )
-
-    parse_common_args(parser)
-
-    parser.add_argument(
-        "data", nargs="?", help="the reference data for the current commit ID"
-    )
-
-    parser.add_argument(
-        "--target-branch",
-        dest="target_branch",
-        help="the branch to which this code will be merged (default: origin/master)",
-        default="origin/master",
-    )
-    parser.add_argument(
-        "--branch",
-        dest="branch",
-        help="the name of the branch to which this code belongs to",
-    )
-    parser.add_argument(
-        "--consider-uncommitted-changes",
-        dest="uncommitted",
-        help="whether to consider uncommitted changes. reference will not be persisted.",
-        action="store_true",
-    )
-
-    return parser.parse_args(args)
-
-
 def persist(
     repo_adapter: GitAdapter,
     reference_adapter: ReferenceAdapter,
@@ -349,13 +275,20 @@ def persist(
         data = fd.read()
         current_commit = repo_adapter.get_current_commit_id()
         branch = branch if branch else repo_adapter.get_current_branch()
-        reference_adapter.persist(current_commit, data, branch, kind, subkind)
+        reference_adapter.persist(
+            current_commit,
+            data,
+            filepath=report_file,
+            branch=branch,
+            kind=kind,
+            subkind=subkind,
+        )
         logging_module.info(
             "Data for commit %s persisted successfully.", current_commit
         )
 
 
-def retrieve(
+def choose_and_retrieve(
     repo_adapter: GitAdapter,
     reference_adapter: ReferenceAdapter,
     target_branch: str = None,
@@ -392,30 +325,3 @@ def retrieve(
             logging_module.error("No data for the selected reference.")
     else:
         logging_module.warning("No reference data found.")
-
-
-def main(args=None, logging_module=logging):
-    args = parse_args(args)
-
-    if args.debug:
-        logging_module.getLogger().setLevel(logging.DEBUG)
-    else:
-        logging_module.getLogger().setLevel(logging.INFO)
-
-    git = GitAdapter(args.repository, args.repository_id_modifier)
-    repository_id = git.get_repository_id()
-    logging_module.info("Your repository ID is %s", repository_id)
-
-    config = configuration(args.repository)
-
-    with adapter_factory(args.adapter, config)(repository_id, config) as adapter:
-        if args.data:
-            persist(git, adapter, args.data, args.branch, args.kind, args.subkind)
-            return
-        retrieve(
-            git, adapter, args.target_branch, args.kind, args.subkind, args.uncommitted
-        )
-
-
-if __name__ == "__main__":
-    main()
