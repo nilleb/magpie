@@ -7,13 +7,13 @@ import shlex
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable, Optional, List, Iterable
+from typing import Callable, Optional, List, Iterable, Tuple
 
 __version__ = "dev~"
 
 HOME = Path.home()
 CONFIG_FILE_NAME = ".magpie.yml"
-DB_FILE_NAME = "magpie.db"
+DB_FILE_NAME = ".magpie.db"
 KNOWN_ADAPTERS = {
     "default": "SqliteAdapter",
 }
@@ -121,7 +121,7 @@ class ReferenceAdapter(object):
 
     def retrieve_data(
         self, commit_id: str, kind: str = None, subkind: str = None
-    ) -> Optional[bytes]:
+    ) -> Tuple[Optional[bytes], Optional[str]]:
         raise NotImplementedError
 
     def persist(
@@ -194,30 +194,27 @@ class SqliteAdapter(ReferenceAdapter):
     def get_commits(
         self, branch: str = None, kind: str = None, subkind: str = None, limit: int = -1
     ) -> frozenset:
-        return frozenset(
-            ReferenceData.select(ReferenceData.commit_id)
-            .where(
-                ReferenceData.branch == branch,
-                ReferenceData.kind == kind,
-                ReferenceData.subkind == subkind,
-            )
-            .order_by(-ReferenceData.collected_at)
-            .limit(limit)
+        query = ReferenceData.select(ReferenceData.commit_id).where(
+            ReferenceData.kind == kind,
+            ReferenceData.subkind == subkind,
         )
+        if branch:
+            query = query.where(ReferenceData.branch == branch)
+
+        response = set()
+        for item in query.order_by(-ReferenceData.collected_at).limit(limit):
+            response.add(item.commit_id)
+        return response
 
     def retrieve_data(
         self, commit_id: str, kind: str = None, subkind: str = None
-    ) -> Optional[bytes]:
-        return (
-            ReferenceData.select(ReferenceData.commit_id)
-            .where(
+    ) -> Tuple[Optional[bytes], Optional[str]]:
+        result = ReferenceData.select(ReferenceData.data, ReferenceData.filepath).where(
                 ReferenceData.commit_id == commit_id,
                 ReferenceData.kind == kind,
                 ReferenceData.subkind == subkind,
-            )
-            .order_by(-ReferenceData.collected_at)
-            .get()
-        )
+            ).order_by(-ReferenceData.collected_at).get()
+        return result.data, result.filepath
 
 
 def iter_callable(git, ref):
@@ -288,6 +285,14 @@ def persist(
         )
 
 
+def write(dest, what):
+    mode = "w" if isinstance(what, str) else "wb"
+    with open(dest, mode) as fd:
+        fd.write(what)
+
+    print("The output has been written to {}".format(dest))
+
+
 def choose_and_retrieve(
     repo_adapter: GitAdapter,
     reference_adapter: ReferenceAdapter,
@@ -317,11 +322,10 @@ def choose_and_retrieve(
 
     if commit_id:
         logging_module.info(f"Retrieving data for reference commit %{commit_id}")
-        reference_data = reference_adapter.retrieve_data(
+        reference_data, filepath = reference_adapter.retrieve_data(
             commit_id, kind=kind, subkind=subkind
         )
-        logging_module.debug(f"Reference data: {reference_data is None}")
-        if not reference_data:
-            logging_module.error("No data for the selected reference.")
+        logging_module.debug(f"Reference data is {'not' if reference_data is None else ''} available.")
+        write(filepath, reference_data)
     else:
         logging_module.warning("No reference data found.")
