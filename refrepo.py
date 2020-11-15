@@ -96,7 +96,7 @@ class GitAdapter(object):
 
     def get_current_branch(self):
         command = "git rev-parse --abbrev-ref HEAD"
-        return get_output(command, working_folder=self.repository_folder)
+        return get_output(command, working_folder=self.repository_folder).rstrip()
 
 
 class ReferenceAdapter(object):
@@ -129,8 +129,8 @@ class ReferenceData(peewee.Model):
     repository_id = peewee.CharField(80)
     commit_id = peewee.CharField(40)
     kind = peewee.CharField(40)
-    subkind = peewee.CharField(40)
-    branch = peewee.CharField(70)
+    subkind = peewee.CharField(40, null=True)
+    branch = peewee.CharField(70, null=True)
     data = peewee.BlobField()
     collected_at = peewee.DateTimeField()
 
@@ -154,14 +154,14 @@ class SqliteAdapter(ReferenceAdapter):
         record.save()
 
     def get_commits(self, branch: str=None, kind: str=None, subkind: str=None, limit: int=-1) -> frozenset:
-        ReferenceData.select(
+        return ReferenceData.select(
             ReferenceData.commit_id
         ).where(
             ReferenceData.branch == branch, ReferenceData.kind == kind, ReferenceData.subkind == subkind
         ).order_by(-ReferenceData.collected_at).limit(limit)
 
     def retrieve_data(self, commit_id: str, kind: str = None, subkind: str = None) -> Optional[bytes]:
-        ReferenceData.select(
+        return ReferenceData.select(
             ReferenceData.commit_id
         ).where(
             ReferenceData.commit_id == commit_id, ReferenceData.kind == kind, ReferenceData.subkind == subkind
@@ -243,6 +243,7 @@ def parse_common_args(parser=None):
         "-k",
         "--kind",
         dest="kind",
+        default="unspecified",
         help="Define the kind of metric being collected. `cc` for Code Coverage, for example.",
     )
     parser.add_argument(
