@@ -111,19 +111,32 @@ class ReferenceAdapter(object):
         pass
 
     def get_commits(
-        self, branch=None, kind: str = None, subkind: str = None, limit=1,
+        self,
+        branch=None,
+        kind: str = None,
+        subkind: str = None,
+        limit=1,
     ) -> frozenset:
         raise NotImplementedError
 
-    def retrieve_data(self, commit_id: str, kind: str = None, subkind: str = None) -> Optional[bytes]:
+    def retrieve_data(
+        self, commit_id: str, kind: str = None, subkind: str = None
+    ) -> Optional[bytes]:
         raise NotImplementedError
 
     def persist(
-        self, commit_id: str, data: bytes, branch: str = None, kind: str=None, subkind: str = None
+        self,
+        commit_id: str,
+        data: bytes,
+        branch: str = None,
+        kind: str = None,
+        subkind: str = None,
     ):
         raise NotImplementedError
-    
+
+
 db = peewee.SqliteDatabase(DB_FILE_NAME)
+
 
 class ReferenceData(peewee.Model):
     repository_id = peewee.CharField(80)
@@ -133,10 +146,13 @@ class ReferenceData(peewee.Model):
     branch = peewee.CharField(70, null=True)
     data = peewee.BlobField()
     collected_at = peewee.DateTimeField()
+    filepath = peewee.CharField()
 
     class Meta:
         database = db
         table_name = "timestamped_reference_data"
+        primary_key = peewee.CompositeKey("repository_id", "commid_it", "kind")
+
 
 class SqliteAdapter(ReferenceAdapter):
     def __init__(self, repository_id, config) -> None:
@@ -147,25 +163,54 @@ class SqliteAdapter(ReferenceAdapter):
     def __exit__(self, exc_type, exc_value, traceback):
         db.close()
 
-    def persist(self, commit_id: str, data: bytes, branch: str, kind: str, subkind: str):
+    def persist(
+        self,
+        commit_id: str,
+        data: bytes,
+        filepath: str,
+        kind: str,
+        branch: str = None,
+        subkind: str = None,
+    ):
         record = ReferenceData(
-            repository_id=self.repository_id, commit_id=commit_id, kind=kind, subkind=subkind,
-            branch=branch, data=data, collected_at=datetime.utcnow())
+            repository_id=self.repository_id,
+            commit_id=commit_id,
+            kind=kind,
+            subkind=subkind,
+            filepath=filepath,
+            branch=branch,
+            data=data,
+            collected_at=datetime.utcnow(),
+        )
         record.save()
 
-    def get_commits(self, branch: str=None, kind: str=None, subkind: str=None, limit: int=-1) -> frozenset:
-        return ReferenceData.select(
-            ReferenceData.commit_id
-        ).where(
-            ReferenceData.branch == branch, ReferenceData.kind == kind, ReferenceData.subkind == subkind
-        ).order_by(-ReferenceData.collected_at).limit(limit)
+    def get_commits(
+        self, branch: str = None, kind: str = None, subkind: str = None, limit: int = -1
+    ) -> frozenset:
+        return (
+            ReferenceData.select(ReferenceData.commit_id)
+            .where(
+                ReferenceData.branch == branch,
+                ReferenceData.kind == kind,
+                ReferenceData.subkind == subkind,
+            )
+            .order_by(-ReferenceData.collected_at)
+            .limit(limit)
+        )
 
-    def retrieve_data(self, commit_id: str, kind: str = None, subkind: str = None) -> Optional[bytes]:
-        return ReferenceData.select(
-            ReferenceData.commit_id
-        ).where(
-            ReferenceData.commit_id == commit_id, ReferenceData.kind == kind, ReferenceData.subkind == subkind
-        ).order_by(-ReferenceData.collected_at).get()
+    def retrieve_data(
+        self, commit_id: str, kind: str = None, subkind: str = None
+    ) -> Optional[bytes]:
+        return (
+            ReferenceData.select(ReferenceData.commit_id)
+            .where(
+                ReferenceData.commit_id == commit_id,
+                ReferenceData.kind == kind,
+                ReferenceData.subkind == subkind,
+            )
+            .order_by(-ReferenceData.collected_at)
+            .get()
+        )
 
 
 def iter_callable(git, ref):
@@ -222,7 +267,7 @@ def parse_common_args(parser=None):
         "--adapter",
         help="Choose the adapter to use (choices: sqlite, default)",
         dest="adapter",
-        default="default"
+        default="default",
     )
     parser.add_argument(
         "--debug",
@@ -255,6 +300,7 @@ def parse_common_args(parser=None):
         "unit tests or integration tests, for example.",
     )
 
+
 def parse_args(args=None, parser=None):
     if not parser:
         parser = argparse.ArgumentParser(
@@ -266,9 +312,7 @@ def parse_args(args=None, parser=None):
     parse_common_args(parser)
 
     parser.add_argument(
-        "data",
-        nargs='?',
-        help="the reference data for the current commit ID"
+        "data", nargs="?", help="the reference data for the current commit ID"
     )
 
     parser.add_argument(
@@ -297,31 +341,31 @@ def persist(
     reference_adapter: ReferenceAdapter,
     report_file: str,
     branch: str = None,
-    kind: str=None,
+    kind: str = None,
     subkind: str = None,
-    logging_module=logging
+    logging_module=logging,
 ):
     with open(report_file, "rb") as fd:
         data = fd.read()
         current_commit = repo_adapter.get_current_commit_id()
         branch = branch if branch else repo_adapter.get_current_branch()
         reference_adapter.persist(current_commit, data, branch, kind, subkind)
-        logging_module.info("Data for commit %s persisted successfully.", current_commit)
+        logging_module.info(
+            "Data for commit %s persisted successfully.", current_commit
+        )
 
 
 def retrieve(
     repo_adapter: GitAdapter,
     reference_adapter: ReferenceAdapter,
-    target_branch: str= None,
-    kind: str=None,
-    subkind: str=None,
-    consider_uncommitted: bool=False,
-    logging_module=logging
+    target_branch: str = None,
+    kind: str = None,
+    subkind: str = None,
+    consider_uncommitted: bool = False,
+    logging_module=logging,
 ):
     reference_commits = reference_adapter.get_commits(kind=kind, subkind=subkind)
-    logging_module.debug(
-        "Found the following reference commits: %r", reference_commits
-    )
+    logging_module.debug("Found the following reference commits: %r", reference_commits)
 
     common_ancestor = repo_adapter.get_common_ancestor(target_branch)
 
@@ -368,7 +412,9 @@ def main(args=None, logging_module=logging):
         if args.data:
             persist(git, adapter, args.data, args.branch, args.kind, args.subkind)
             return
-        retrieve(git, adapter, args.target_branch, args.kind, args.subkind, args.uncommitted)
+        retrieve(
+            git, adapter, args.target_branch, args.kind, args.subkind, args.uncommitted
+        )
 
 
 if __name__ == "__main__":
