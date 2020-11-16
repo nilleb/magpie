@@ -1,7 +1,7 @@
 import click
 import logging
 
-from magpie import GitAdapter, configuration, adapter_factory, persist, choose_and_retrieve
+from magpie.app import GitAdapter, configuration, adapter_factory, persist, choose_and_retrieve
 
 
 class MagpieTask:
@@ -134,7 +134,3 @@ def retrieve(magpie, target_branch, consider_uncommitted_changes):
     click.echo(f"retrieve (in {magpie.repository})")
 
     magpie.retrieve(target_branch, consider_uncommitted_changes)
-
-
-if __name__ == "__main__":
-    cli()

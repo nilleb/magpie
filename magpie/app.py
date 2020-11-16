@@ -187,7 +187,7 @@ class SqliteAdapter(ReferenceAdapter):
                 collected_at=datetime.utcnow(),
             )
         except peewee.IntegrityError:
-            logging.warning(
+            logging.exception(
                 "Another record seems to exist for this repository/commit/kind/subkind"
             )
 
