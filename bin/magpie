@@ -1,5 +1,5 @@
-if [[ ! -f "../env/bin/activate" ]]; then
-    ./setup
+if [[ ! -f "env/bin/activate" ]]; then
+    bin/setup
 fi
 
 . env/bin/activate
