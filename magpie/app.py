@@ -1,4 +1,3 @@
-import click
 import yaml
 import peewee
 from datetime import datetime
@@ -111,12 +110,11 @@ class ReferenceAdapter(object):
         pass
 
     def get_commits(
-        self,
-        branch=None,
-        kind: str = None,
-        subkind: str = None,
-        limit=1,
+        self, branch=None, kind: str = None, subkind: str = None, limit=1,
     ) -> frozenset:
+        raise NotImplementedError
+
+    def log(self, limit=1,) -> frozenset:
         raise NotImplementedError
 
     def retrieve_data(
@@ -195,6 +193,7 @@ class SqliteAdapter(ReferenceAdapter):
         self, branch: str = None, kind: str = None, subkind: str = None, limit: int = -1
     ) -> frozenset:
         query = ReferenceData.select(ReferenceData.commit_id).where(
+            ReferenceData.repository_id == self.repository_id,
             ReferenceData.kind == kind,
             ReferenceData.subkind == subkind,
         )
@@ -206,14 +205,40 @@ class SqliteAdapter(ReferenceAdapter):
             response.add(item.commit_id)
         return response
 
+    def log(self, limit: int = -1) -> list:
+        kinds_fn = peewee.fn.GROUP_CONCAT(ReferenceData.kind)
+        subkinds_fn = peewee.fn.GROUP_CONCAT(ReferenceData.subkind)
+        query = (
+            ReferenceData.select(
+                ReferenceData.commit_id,
+                kinds_fn.alias("kinds"),
+                subkinds_fn.alias("subkinds"),
+            )
+            .where(ReferenceData.repository_id == self.repository_id,)
+            .group_by(ReferenceData.repository_id, ReferenceData.commit_id)
+        )
+        response = {}
+        for item in query.limit(limit):
+            kinds = item.kinds.split(',')
+            subkinds = item.subkinds.split(',')
+            response[item.commit_id] = [f"{val[:2]}:{subkinds[idx][:2]}" for idx, val in enumerate(kinds)]
+            logging.debug(response[item.commit_id])
+        return response
+
     def retrieve_data(
         self, commit_id: str, kind: str = None, subkind: str = None
     ) -> Tuple[Optional[bytes], Optional[str]]:
-        result = ReferenceData.select(ReferenceData.data, ReferenceData.filepath).where(
+        result = (
+            ReferenceData.select(ReferenceData.data, ReferenceData.filepath)
+            .where(
+                ReferenceData.repository_id == self.repository_id,
                 ReferenceData.commit_id == commit_id,
                 ReferenceData.kind == kind,
                 ReferenceData.subkind == subkind,
-            ).order_by(-ReferenceData.collected_at).get()
+            )
+            .order_by(-ReferenceData.collected_at)
+            .get()
+        )
         return result.data, result.filepath
 
 
@@ -325,7 +350,9 @@ def choose_and_retrieve(
         reference_data, filepath = reference_adapter.retrieve_data(
             commit_id, kind=kind, subkind=subkind
         )
-        logging_module.debug(f"Reference data is {'not' if reference_data is None else ''} available.")
+        logging_module.debug(
+            f"Reference data is {'not' if reference_data is None else ''} available."
+        )
         write(filepath, reference_data)
     else:
         logging_module.warning("No reference data found.")

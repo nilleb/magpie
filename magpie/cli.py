@@ -2,6 +2,7 @@ import click
 import logging
 
 from magpie.app import GitAdapter, configuration, adapter_factory, persist, choose_and_retrieve
+from magpie.log import annotated_log
 
 
 class MagpieTask:
@@ -56,6 +57,16 @@ class MagpieTask:
                 consider_uncommitted=consider_uncommitted_changes,
             )
 
+    def log(self, limit):
+        _, repository_id = self._get_git_repository()
+        config = configuration(self.repository)
+
+        with adapter_factory(self.reference_adapter_name, config)(
+            repository_id, config
+        ) as adapter:
+            commits = annotated_log(self.repository, adapter, limit)
+            for commit in commits:
+                print(commit)
 
 pass_magpie = click.make_pass_decorator(MagpieTask)
 
@@ -134,3 +145,14 @@ def retrieve(magpie, target_branch, consider_uncommitted_changes):
     click.echo(f"retrieve (in {magpie.repository})")
 
     magpie.retrieve(target_branch, consider_uncommitted_changes)
+
+@cli.command()
+@click.option(
+    "-n",
+    "--limit",
+    default=30,
+    help="limit the log to this number of commits",
+)
+@pass_magpie
+def log(magpie, limit):
+    magpie.log(limit)
