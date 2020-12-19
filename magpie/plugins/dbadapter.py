@@ -35,25 +35,43 @@ class ReferenceData(peewee.Model):
 
 class DBProvider(object):
     def __init__(self, config):
-        engine = config.get('database').lower()
-        if engine == 'sqlite':
-            self._db = peewee.SqliteDatabase(SQLITE_FILE_NAME)
-        elif engine in ('postgres', 'mysql'):
-            db = config['dbadapter.db']
-            user = config.get('dbadapter.user')
-            pwd = config.get('dbadapter.password')
-            host = config.get('dbadapter.host')
-            port = config.get('dbadapter.port')
+        engine = config.get("database").lower()
+        if engine == "sqlite":
+            dbpath = config.get("sqlite.dbpath")
+            self._db = peewee.SqliteDatabase(dbpath)
+            self._db_info = {"engine": engine, "dbpath": dbpath}
+        elif engine in ("postgres", "mysql"):
+            db = config["dbadapter.db"]
+            user = config.get("dbadapter.user")
+            pwd = config.get("dbadapter.password")
+            host = config.get("dbadapter.host")
+            port = config.get("dbadapter.port")
             if port:
                 port = int(port)
-            clazz = peewee.PostgresqlDatabase if engine == 'postgres' else peewee.MySQLDatabase
+            clazz = (
+                peewee.PostgresqlDatabase
+                if engine == "postgres"
+                else peewee.MySQLDatabase
+            )
             self._db = clazz(db, user=user, password=pwd, host=host, port=port)
+            self._db_info = {
+                "engine": engine,
+                "db": db,
+                "user": user,
+                "password": len(pws) * "*",
+                "host": host,
+                "port": port,
+            }
         else:
             raise NameError(f"Database engine not supported: {engine}")
 
     @property
     def database(self):
         return self._db
+
+    @property
+    def database_info(self):
+        return self._db_info
 
 
 class DBReferenceAdapter(ReferenceAdapter):

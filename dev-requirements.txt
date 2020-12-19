@@ -8,3 +8,6 @@ black==19.10b0
 tox==3.14.3
 mypy==0.761
 isort
+jupyter
+notebook
+pandas
