@@ -7,19 +7,13 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import Callable, Optional, List, Iterable, Tuple
+from straight.plugin import load
 
 __version__ = "dev~"
 
 HOME = Path.home()
 CONFIG_FILE_NAME = ".magpie.yml"
-DB_FILE_NAME = ".magpie.db"
-KNOWN_ADAPTERS = {
-    "default": "SqliteAdapter",
-}
-DEFAULT_CONFIGURATION = {
-    "sqlite.dbpath": HOME.joinpath(DB_FILE_NAME),
-    "known.adapters": KNOWN_ADAPTERS,
-}
+DEFAULT_CONFIGURATION = {"adapter.class": "DBReferenceAdapter"}
 
 
 def get_output(command, working_folder=None):
@@ -134,112 +128,7 @@ class ReferenceAdapter(object):
         raise NotImplementedError
 
 
-db = peewee.SqliteDatabase(DB_FILE_NAME)
-
-
-class ReferenceData(peewee.Model):
-    repository_id = peewee.CharField(80)
-    commit_id = peewee.CharField(40)
-    kind = peewee.CharField(40)
-    subkind = peewee.CharField(40, null=True)
-    branch = peewee.CharField(70, null=True)
-    data = peewee.BlobField()
-    collected_at = peewee.DateTimeField()
-    filepath = peewee.CharField()
-
-    class Meta:
-        database = db
-        table_name = "timestamped_reference_data"
-        primary_key = peewee.CompositeKey(
-            "repository_id", "commit_id", "kind", "subkind"
-        )
-
-
-class SqliteAdapter(ReferenceAdapter):
-    def __init__(self, repository_id, config) -> None:
-        super().__init__(repository_id, config)
-        db.connect()
-        db.create_tables([ReferenceData])
-
-    def __exit__(self, exc_type, exc_value, traceback):
-        db.close()
-
-    def persist(
-        self,
-        commit_id: str,
-        data: bytes,
-        filepath: str,
-        branch: str = None,
-        kind: str = None,
-        subkind: str = None,
-    ):
-        try:
-            ReferenceData.create(
-                repository_id=self.repository_id,
-                commit_id=commit_id,
-                kind=kind,
-                subkind=subkind,
-                filepath=filepath,
-                branch=branch,
-                data=data,
-                collected_at=datetime.utcnow(),
-            )
-        except peewee.IntegrityError:
-            logging.exception(
-                "Another record seems to exist for this repository/commit/kind/subkind"
-            )
-
-    def get_commits(
-        self, branch: str = None, kind: str = None, subkind: str = None, limit: int = -1
-    ) -> frozenset:
-        query = ReferenceData.select(ReferenceData.commit_id).where(
-            ReferenceData.repository_id == self.repository_id,
-            ReferenceData.kind == kind,
-            ReferenceData.subkind == subkind,
-        )
-        if branch:
-            query = query.where(ReferenceData.branch == branch)
-
-        response = set()
-        for item in query.order_by(-ReferenceData.collected_at).limit(limit):
-            response.add(item.commit_id)
-        return response
-
-    def log(self, limit: int = -1) -> list:
-        kinds_fn = peewee.fn.GROUP_CONCAT(ReferenceData.kind)
-        subkinds_fn = peewee.fn.GROUP_CONCAT(ReferenceData.subkind)
-        query = (
-            ReferenceData.select(
-                ReferenceData.commit_id,
-                kinds_fn.alias("kinds"),
-                subkinds_fn.alias("subkinds"),
-            )
-            .where(ReferenceData.repository_id == self.repository_id,)
-            .group_by(ReferenceData.repository_id, ReferenceData.commit_id)
-        )
-        response = {}
-        for item in query.limit(limit):
-            kinds = item.kinds.split(',')
-            subkinds = item.subkinds.split(',')
-            response[item.commit_id] = [f"{val[:2]}:{subkinds[idx][:2]}" for idx, val in enumerate(kinds)]
-            logging.debug(response[item.commit_id])
-        return response
-
-    def retrieve_data(
-        self, commit_id: str, kind: str = None, subkind: str = None
-    ) -> Tuple[Optional[bytes], Optional[str]]:
-        result = (
-            ReferenceData.select(ReferenceData.data, ReferenceData.filepath)
-            .where(
-                ReferenceData.repository_id == self.repository_id,
-                ReferenceData.commit_id == commit_id,
-                ReferenceData.kind == kind,
-                ReferenceData.subkind == subkind,
-            )
-            .order_by(-ReferenceData.collected_at)
-            .get()
-        )
-        return result.data, result.filepath
+reference_adapter_plugins = load("magpie.plugins", subclasses=ReferenceAdapter)
 
 
 def iter_callable(git, ref):
@@ -264,8 +153,13 @@ def str_to_class(classname):
 
 
 def adapter_factory(adapter: str, config: dict) -> ReferenceAdapter:
-    selected = adapter or config.get("adapter.class", None) or "default"
-    return str_to_class(KNOWN_ADAPTERS[selected])
+    selected = adapter or config.get("adapter.class", None)
+
+    for plugin in reference_adapter_plugins:
+        if selected in repr(plugin):
+            return plugin
+
+    raise NameError(f"Adapter not found: {selected}")
 
 
 def configuration(repository_path="."):
