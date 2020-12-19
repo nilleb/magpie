@@ -10,4 +10,6 @@ mypy==0.761
 isort
 jupyter
 notebook
-pandas
+twine
+setuptools
+wheel

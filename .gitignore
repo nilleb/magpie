@@ -12,3 +12,4 @@ env
 tmp
 queries.sql
 .vscode/.ropeproject/objectdb
+magpie.egg-info

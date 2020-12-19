@@ -1,5 +1,1 @@
-pyyaml
-peewee
-Click
-gitpython
-straight.plugin
+.
