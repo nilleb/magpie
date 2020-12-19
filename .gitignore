@@ -11,3 +11,4 @@ env
 .mypy_cache
 tmp
 queries.sql
+.vscode/.ropeproject/objectdb
